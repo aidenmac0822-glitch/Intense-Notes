@@ -1,0 +1,322 @@
+/* ========== THEME TOKENS ========== */
+:root{
+  --radius: 18px;
+  --radius2: 14px;
+  --shadow: 0 18px 55px rgba(0,0,0,.55);
+  --shadow2: 0 10px 26px rgba(0,0,0,.35);
+
+  --accent: #6B5BFF;
+  --accent2: #00E0FF;
+  --danger: #FF3D77;
+  --ok: #32FFB5;
+  --warn: #FFD166;
+
+  --bg1: linear-gradient(180deg, #050711, #040612 40%, #040513);
+  --text: #EAF0FF;
+  --muted: rgba(234,240,255,.72);
+  --panel: rgba(255,255,255,.06);
+  --panel2: rgba(255,255,255,.04);
+  --stroke: rgba(255,255,255,.10);
+  --field: rgba(0,0,0,.28);
+  --field2: rgba(0,0,0,.20);
+  --scroll: rgba(255,255,255,.14);
+}
+
+html[data-theme="dark"]{
+  --bg1:
+    radial-gradient(1200px 700px at 15% -10%, rgba(107,91,255,.25), transparent 55%),
+    radial-gradient(900px 600px at 90% 10%, rgba(0,224,255,.16), transparent 45%),
+    radial-gradient(700px 500px at 40% 110%, rgba(255,61,119,.10), transparent 50%),
+    linear-gradient(180deg, #050711, #040612 40%, #040513);
+
+  --text: #EAF0FF;
+  --muted: rgba(234,240,255,.72);
+  --panel: rgba(255,255,255,.06);
+  --panel2: rgba(255,255,255,.04);
+  --stroke: rgba(255,255,255,.10);
+  --field: rgba(0,0,0,.28);
+  --field2: rgba(0,0,0,.20);
+  --shadow: 0 18px 55px rgba(0,0,0,.55);
+  --shadow2: 0 10px 26px rgba(0,0,0,.35);
+  --scroll: rgba(255,255,255,.14);
+}
+
+html[data-theme="light"]{
+  --bg1:
+    radial-gradient(1200px 700px at 15% -10%, rgba(107,91,255,.16), transparent 60%),
+    radial-gradient(900px 600px at 90% 10%, rgba(0,224,255,.10), transparent 55%),
+    radial-gradient(700px 500px at 40% 110%, rgba(255,61,119,.08), transparent 55%),
+    linear-gradient(180deg, #FFFFFF, #F6F8FF 45%, #F3F6FF);
+
+  --text: #0E1326;
+  --muted: rgba(14,19,38,.68);
+  --panel: rgba(0,0,0,.04);
+  --panel2: rgba(0,0,0,.03);
+  --stroke: rgba(0,0,0,.10);
+  --field: rgba(255,255,255,.90);
+  --field2: rgba(255,255,255,.72);
+  --shadow: 0 18px 55px rgba(0,0,0,.12);
+  --shadow2: 0 10px 26px rgba(0,0,0,.10);
+  --scroll: rgba(0,0,0,.18);
+}
+
+/* ========== GLOBAL ========== */
+*{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  margin:0;
+  color:var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+  background: var(--bg1);
+}
+
+a{ color:inherit; }
+.muted{ color: var(--muted); font-size: 12px; line-height: 1.25; }
+
+::-webkit-scrollbar{ width:10px; }
+::-webkit-scrollbar-track{ background: transparent; }
+::-webkit-scrollbar-thumb{ background: var(--scroll); border-radius:10px; }
+::-webkit-scrollbar-thumb:hover{ background: color-mix(in srgb, var(--scroll) 80%, transparent); }
+
+/* ========== LAYOUT ========== */
+.layout{
+  min-height: 100vh;
+  padding: 14px;
+  display:flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.card{
+  background: var(--panel);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.header{
+  padding: 14px;
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  gap: 12px;
+  position: sticky;
+  top: 10px;
+  z-index: 20;
+}
+
+.brand{
+  font-weight: 950;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  font-size: 14px;
+}
+.brand-glow{
+  text-shadow: 0 0 18px rgba(107,91,255,.25), 0 0 24px rgba(0,224,255,.12);
+}
+
+.cols{
+  display:grid;
+  grid-template-columns: 320px 1fr 360px;
+  gap: 14px;
+}
+
+.panel{
+  padding: 14px;
+  display:flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: calc(100vh - 140px);
+}
+
+.panel-head{
+  display:flex;
+  justify-content: space-between;
+  align-items:center;
+  gap: 10px;
+}
+
+.row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.spacer{ flex:1; }
+
+/* ========== CONTROLS ========== */
+button{
+  cursor:pointer;
+  border:none;
+  border-radius: var(--radius2);
+  padding: 10px 12px;
+  font-weight: 850;
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  transition: transform .08s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+button:hover{
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  border-color: color-mix(in srgb, var(--text) 16%, transparent);
+}
+button:active{ transform: translateY(1px); }
+button:disabled{ opacity:.5; cursor:not-allowed; }
+
+.btn-primary{
+  background: linear-gradient(135deg, rgba(107,91,255,.95), rgba(0,224,255,.28));
+  border: 1px solid rgba(107,91,255,.70);
+  box-shadow: 0 0 26px rgba(107,91,255,.22), 0 0 36px rgba(0,224,255,.10);
+  color: #fff;
+}
+.btn-danger{
+  background: rgba(255,61,119,.12);
+  border: 1px solid rgba(255,61,119,.35);
+}
+.btn-ok{
+  background: rgba(50,255,181,.10);
+  border: 1px solid rgba(50,255,181,.30);
+}
+
+.pill{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  background: var(--panel2);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+input, textarea, select{
+  width:100%;
+  border-radius: var(--radius2);
+  padding: 11px 12px;
+  background: var(--field);
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text);
+  outline: none;
+  box-shadow: var(--shadow2);
+}
+input:focus, textarea:focus, select:focus{
+  border-color: rgba(107,91,255,.55);
+  box-shadow: 0 0 0 4px rgba(107,91,255,.18), var(--shadow2);
+}
+input::placeholder, textarea::placeholder{ color: color-mix(in srgb, var(--text) 55%, transparent); }
+textarea{ min-height: 220px; resize: vertical; line-height: 1.55; }
+
+/* ========== LISTS ========== */
+.list{
+  display:flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow:auto;
+  padding-right: 4px;
+}
+
+.item{
+  border-radius: var(--radius);
+  background: var(--field2);
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  padding: 12px;
+  box-shadow: var(--shadow2);
+}
+.item.active{
+  border-color: rgba(107,91,255,.55);
+  background: color-mix(in srgb, rgba(107,91,255,.18) 70%, var(--field2));
+}
+.item-title{
+  font-weight: 950;
+  letter-spacing: .01em;
+}
+.item-sub{
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ========== CARDS (tasks + flashcards) ========== */
+.details-card{
+  padding: 12px;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  background: var(--field2);
+  box-shadow: var(--shadow2);
+}
+
+/* Study card pop */
+.study-card{
+  border-radius: 22px;
+  padding: 18px;
+  border: 1px solid rgba(107,91,255,.32);
+  background: linear-gradient(135deg, rgba(107,91,255,.12), rgba(0,224,255,.06));
+  box-shadow: 0 0 26px rgba(107,91,255,.18), var(--shadow2);
+}
+.study-label{
+  display:inline-block;
+  font-weight: 950;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+/* ========== CALENDAR GRID ========== */
+.cal-grid{
+  display:grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+}
+.cal-dow{
+  text-align:center;
+  font-size: 11px;
+  color: var(--muted);
+  padding-bottom: 2px;
+}
+.cal-day{
+  position: relative;
+  min-height: 66px;
+  padding: 10px;
+  border-radius: 16px;
+  background: var(--field2);
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  box-shadow: var(--shadow2);
+  text-align:left;
+}
+.cal-day:hover{
+  border-color: color-mix(in srgb, var(--text) 18%, transparent);
+}
+.cal-day.active{
+  border-color: rgba(107,91,255,.65);
+  box-shadow: 0 0 0 4px rgba(107,91,255,.14), var(--shadow2);
+}
+.cal-date{
+  font-weight: 950;
+}
+.cal-meta{
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.cal-dot{
+  position:absolute;
+  top: 10px;
+  right: 10px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+.cal-dot.warn{
+  background: var(--warn);
+  box-shadow: 0 0 16px rgba(255,209,102,.28);
+}
+.cal-dot.ok{
+  background: var(--ok);
+  box-shadow: 0 0 16px rgba(50,255,181,.24);
+}
+
+/* ========== MOBILE ========== */
+@media (max-width: 1100px){
+  .cols{ grid-template-columns: 1fr; }
+  .panel{ min-height: auto; }
+  .header{ top: 0; }
+}
