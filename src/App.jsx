@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { auth, provider, db } from "./firebase";
-import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
+import {
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  signOut,
+  onAuthStateChanged,
+} from "firebase/auth";
 import {
   collection,
   deleteDoc,
@@ -13,6 +19,7 @@ import {
 } from "firebase/firestore";
 import { extractPdfText } from "./lib/pdf";
 
+/* ---------------- helpers ---------------- */
 function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
@@ -46,10 +53,11 @@ function buildMonthGrid(date) {
   return cells;
 }
 
+/* ---------------- App ---------------- */
 export default function App() {
   const [user, setUser] = useState(null);
 
-  // 🌗 Dark/Light toggle (persistent)
+  // 🌗 Theme (persistent)
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem("theme");
     return saved === "light" || saved === "dark" ? saved : "dark";
@@ -59,6 +67,12 @@ export default function App() {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
+  // Auth (mobile-safe redirect completion)
+  useEffect(() => {
+    getRedirectResult(auth).catch(() => {});
+  }, []);
+
+  // App data
   const [notes, setNotes] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [cards, setCards] = useState([]);
@@ -74,11 +88,11 @@ export default function App() {
   const [draftClass, setDraftClass] = useState("");
   const [draftBody, setDraftBody] = useState("");
 
-  // Notes search + class folders
+  // Search / folders
   const [noteSearch, setNoteSearch] = useState("");
   const [classFilter, setClassFilter] = useState("ALL");
 
-  // Tasks inputs
+  // Tasks
   const [taskTitle, setTaskTitle] = useState("");
   const [taskClass, setTaskClass] = useState("");
   const [taskDue, setTaskDue] = useState("");
@@ -87,20 +101,23 @@ export default function App() {
   const [calMonth, setCalMonth] = useState(() => new Date());
   const [selectedDay, setSelectedDay] = useState(null);
 
-  // Flashcard study mode
+  // Flashcards study
   const [studyMode, setStudyMode] = useState(false);
   const [studyIndex, setStudyIndex] = useState(0);
   const [studyFlipped, setStudyFlipped] = useState(false);
   const [studyOnlyThisNote, setStudyOnlyThisNote] = useState(false);
 
-  // Transcript (live)
+  // Transcript
   const [transcript, setTranscript] = useState("");
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(true);
   const speechRef = useRef(null);
 
-  // Busy banner
+  // Busy + save status
   const [busy, setBusy] = useState("");
+  const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
+  const saveDebounceRef = useRef(null);
+  const ignoreAutosaveRef = useRef(false);
 
   // Auth listener
   useEffect(() => {
@@ -146,15 +163,24 @@ export default function App() {
     };
   }, [user]);
 
-  // Load draft when note changes (this is how “rename notes” works)
+  // Load drafts when switching notes
   useEffect(() => {
     if (!activeNote) return;
+
+    ignoreAutosaveRef.current = true;
     setDraftTitle(activeNote.title || "");
     setDraftClass(activeNote.className || "");
     setDraftBody(activeNote.body || "");
-  }, [activeNoteId]); // eslint-disable-line react-hooks/exhaustive-deps
+    setSaveState("idle");
 
-  // Init speech recognition
+    // allow autosave after state updates settle
+    setTimeout(() => {
+      ignoreAutosaveRef.current = false;
+    }, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeNoteId]);
+
+  // Speech recognition init
   useEffect(() => {
     const SpeechRecognition =
       window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -170,17 +196,15 @@ export default function App() {
     rec.onresult = (event) => {
       let finalText = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalText += t + " ";
+        if (event.results[i].isFinal) finalText += event.results[i][0].transcript + " ";
       }
-      if (finalText) setTranscript((prev) => prev + finalText);
+      if (finalText) setTranscript((p) => p + finalText);
     };
 
     rec.onerror = () => setIsTranscribing(false);
     rec.onend = () => setIsTranscribing(false);
 
     speechRef.current = rec;
-
     return () => {
       try {
         rec.stop();
@@ -188,7 +212,7 @@ export default function App() {
     };
   }, []);
 
-  // Class folders list
+  // Folder list
   const classFolders = useMemo(() => {
     const set = new Set();
     for (const n of notes) {
@@ -198,7 +222,7 @@ export default function App() {
     return ["ALL", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
   }, [notes]);
 
-  // Filter + pin sorting
+  // Filter + sort notes (pinned first, then most recent)
   const filteredNotes = useMemo(() => {
     const q = normalize(noteSearch);
     const cf = classFilter;
@@ -224,7 +248,7 @@ export default function App() {
     });
   }, [notes, noteSearch, classFilter]);
 
-  // Calendar: tasks grouped by date
+  // Calendar map
   const tasksByDate = useMemo(() => {
     const map = new Map();
     for (const t of tasks) {
@@ -242,15 +266,20 @@ export default function App() {
       : cards;
   }, [cards, studyOnlyThisNote, activeNoteId]);
 
-  // Auth actions
+  /* ---------------- actions ---------------- */
+
   async function login() {
-    await signInWithPopup(auth, provider);
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (e) {
+      // Mobile fallback
+      await signInWithRedirect(auth, provider);
+    }
   }
   async function logout() {
     await signOut(auth);
   }
 
-  // Notes actions
   async function createNote() {
     if (!user) return;
     const id = uid();
@@ -265,19 +294,54 @@ export default function App() {
     setActiveNoteId(id);
   }
 
-  async function saveNote() {
+  async function saveNote(manual = false) {
     if (!user || !activeNoteId) return;
-    await setDoc(
-      doc(db, "users", user.uid, "notes", activeNoteId),
-      {
-        title: draftTitle.trim() || "Untitled",
-        className: draftClass.trim(),
-        body: draftBody,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
+
+    if (manual) setBusy("Saving...");
+    setSaveState("saving");
+
+    try {
+      await setDoc(
+        doc(db, "users", user.uid, "notes", activeNoteId),
+        {
+          title: draftTitle.trim() || "Untitled",
+          className: draftClass.trim(),
+          body: draftBody,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      setSaveState("saved");
+      if (manual) setBusy("");
+
+      window.clearTimeout(saveDebounceRef.current);
+      saveDebounceRef.current = window.setTimeout(() => setSaveState("idle"), 1200);
+    } catch (e) {
+      console.error(e);
+      setSaveState("error");
+      if (manual) setBusy("");
+      alert("Save failed: " + (e?.message || e));
+    }
   }
+
+  // Autosave debounce: triggers after typing stops
+  useEffect(() => {
+    if (!user || !activeNoteId) return;
+    if (ignoreAutosaveRef.current) return;
+
+    if (saveDebounceRef.current) window.clearTimeout(saveDebounceRef.current);
+    setSaveState("saving");
+
+    saveDebounceRef.current = window.setTimeout(() => {
+      saveNote(false);
+    }, 900);
+
+    return () => {
+      if (saveDebounceRef.current) window.clearTimeout(saveDebounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftTitle, draftClass, draftBody]);
 
   async function deleteNote() {
     if (!user || !activeNoteId) return;
@@ -296,7 +360,6 @@ export default function App() {
     );
   }
 
-  // Tasks actions
   async function addTask() {
     if (!user) return;
     if (!taskTitle.trim() || !taskDue) {
@@ -304,25 +367,26 @@ export default function App() {
       return;
     }
     const id = uid();
-    await setDoc(doc(db, "users", user.uid, "tasks", id), {
-      title: taskTitle.trim(),
-      className: taskClass.trim(),
-      due: taskDue,
-      done: false,
-      createdAt: serverTimestamp(),
-    });
-    setTaskTitle("");
-    setTaskClass("");
-    setTaskDue("");
+    try {
+      await setDoc(doc(db, "users", user.uid, "tasks", id), {
+        title: taskTitle.trim(),
+        className: taskClass.trim(),
+        due: taskDue,
+        done: false,
+        createdAt: serverTimestamp(),
+      });
+      setTaskTitle("");
+      setTaskClass("");
+      setTaskDue("");
+    } catch (e) {
+      console.error(e);
+      alert("Task save failed: " + (e?.message || e));
+    }
   }
 
   async function toggleTask(t) {
     if (!user) return;
-    await setDoc(
-      doc(db, "users", user.uid, "tasks", t.id),
-      { done: !t.done },
-      { merge: true }
-    );
+    await setDoc(doc(db, "users", user.uid, "tasks", t.id), { done: !t.done }, { merge: true });
   }
 
   async function deleteTask(t) {
@@ -330,10 +394,9 @@ export default function App() {
     await deleteDoc(doc(db, "users", user.uid, "tasks", t.id));
   }
 
-  // PDF import
   async function importPdf(file) {
     if (!file) return;
-    setBusy("Extracting PDF text...");
+    setBusy("Extracting PDF…");
     try {
       const text = await extractPdfText(file);
       setDraftBody((prev) => {
@@ -341,30 +404,28 @@ export default function App() {
         const block = `\n\n${header}\n${text}\n--- /PDF ---\n`;
         return prev ? prev + block : block.trimStart();
       });
-    } catch {
+    } catch (e) {
+      console.error(e);
       alert("PDF import failed.");
     } finally {
       setBusy("");
     }
   }
 
-  // AI hooks (will work once you add serverless /api endpoints)
   async function summarize() {
-    setBusy("Summarizing...");
+    setBusy("Summarizing…");
     try {
       const res = await fetch("/api/summarize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: draftBody }),
       });
-      if (!res.ok) throw new Error("Summarize failed");
+      if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      setDraftBody(
-        (prev) =>
-          `${prev}\n\n=== AI SUMMARY ===\n${data.summary}\n=== /SUMMARY ===\n`
-      );
-    } catch {
-      alert("Summarizer not set up yet.");
+      setDraftBody((prev) => `${prev}\n\n=== AI SUMMARY ===\n${data.summary}\n=== /SUMMARY ===\n`);
+    } catch (e) {
+      console.error(e);
+      alert("Summarize failed. (Check /api/summarize + OPENAI_API_KEY)");
     } finally {
       setBusy("");
     }
@@ -372,36 +433,47 @@ export default function App() {
 
   async function makeFlashcards() {
     if (!user || !activeNoteId) return;
-    setBusy("Generating flashcards...");
+    setBusy("Generating flashcards…");
     try {
       const res = await fetch("/api/flashcards", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: draftBody }),
       });
-      if (!res.ok) throw new Error("Flashcards failed");
+      if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      const arr = Array.isArray(data.cards) ? data.cards : [];
 
-      for (const c of arr.slice(0, 25)) {
+      const arr = Array.isArray(data.cards) ? data.cards : [];
+      if (arr.length === 0) {
+        alert("No cards returned.");
+        return;
+      }
+
+      const toSave = arr.slice(0, 25);
+      for (const c of toSave) {
         const id = uid();
         await setDoc(doc(db, "users", user.uid, "flashcards", id), {
           noteId: activeNoteId,
           noteTitle: draftTitle || "Untitled",
-          question: String(c.question || "").slice(0, 400),
-          answer: String(c.answer || "").slice(0, 1200),
+          question: String(c.question || "").slice(0, 500),
+          answer: String(c.answer || "").slice(0, 1500),
           createdAt: serverTimestamp(),
         });
       }
-      alert(`Saved ${Math.min(arr.length, 25)} flashcards.`);
-    } catch {
-      alert("Flashcards not set up yet.");
+      alert(`Saved ${toSave.length} flashcards.`);
+    } catch (e) {
+      console.error(e);
+      alert("Flashcards failed. (Check /api/flashcards + OPENAI_API_KEY)");
     } finally {
       setBusy("");
     }
   }
 
-  // Transcript actions
+  function timestamp() {
+    const t = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    setDraftBody((prev) => `${prev}\n[${t}] `);
+  }
+
   function startTranscription() {
     if (!speechSupported || !speechRef.current) {
       alert("Transcription not supported here. Try Chrome/Edge.");
@@ -414,7 +486,6 @@ export default function App() {
       setIsTranscribing(true);
     }
   }
-
   function stopTranscription() {
     try {
       speechRef.current?.stop();
@@ -422,7 +493,6 @@ export default function App() {
       setIsTranscribing(false);
     }
   }
-
   function insertTranscriptIntoNote() {
     if (!transcript.trim()) return;
     setDraftBody(
@@ -431,15 +501,6 @@ export default function App() {
     );
   }
 
-  function timestamp() {
-    const t = new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    setDraftBody((prev) => `${prev}\n[${t}] `);
-  }
-
-  // Study mode actions
   function startStudy() {
     if (studyDeck.length === 0) {
       alert("No flashcards to study yet.");
@@ -456,25 +517,22 @@ export default function App() {
   }
   function nextCard() {
     setStudyFlipped(false);
-    setStudyIndex((i) =>
-      Math.min(i + 1, Math.max(0, studyDeck.length - 1))
-    );
+    setStudyIndex((i) => Math.min(i + 1, Math.max(0, studyDeck.length - 1)));
   }
   function prevCard() {
     setStudyFlipped(false);
     setStudyIndex((i) => Math.max(i - 1, 0));
   }
 
-  // Signed-out screen
+  /* ---------------- UI ---------------- */
+
   if (!user) {
     return (
       <div className="layout">
-        <div className="card header">
+        <div className="card header soft-enter">
           <div>
             <div className="brand">INTENSE NOTES</div>
-            <div className="muted">
-              Search • Folders • Pin • Calendar • Flashcards • Transcript
-            </div>
+            <div className="brand-sub">Neon notes • calendar • flashcards • transcript</div>
           </div>
 
           <div className="row">
@@ -487,7 +545,11 @@ export default function App() {
           </div>
         </div>
 
-       <section className="card panel soft-enter"></section>
+        <div className="card panel soft-enter">
+          <div className="pill">Tip: once deployed, it syncs across all devices automatically.</div>
+          <div className="muted">
+            If login opens then reloads, make sure your domain is in Firebase → Auth → Authorized domains.
+          </div>
         </div>
       </div>
     );
@@ -495,14 +557,23 @@ export default function App() {
 
   return (
     <div className="layout">
-      <div className="card header">
+      <div className="card header soft-enter">
         <div>
           <div className="brand">INTENSE NOTES</div>
-          <div className="muted">Signed in as {user.email}</div>
+          <div className="brand-sub">Signed in as {user.email}</div>
         </div>
 
         <div className="row">
-          {busy ? <div className="pill">{busy}</div> : null}
+          {busy ? <span className="pill">{busy}</span> : null}
+          {saveState !== "idle" ? (
+            <span className="pill">
+              {saveState === "saving"
+                ? "Saving…"
+                : saveState === "saved"
+                ? "Saved ✓"
+                : "Error ⚠️"}
+            </span>
+          ) : null}
           <button onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}>
             {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
           </button>
@@ -514,7 +585,7 @@ export default function App() {
 
       <div className="cols">
         {/* LEFT: Notes */}
-        <section className="card panel">
+        <section className="card panel soft-enter">
           <div className="panel-head">
             <b>Notes</b>
             <button className="btn-primary" onClick={createNote}>
@@ -532,13 +603,7 @@ export default function App() {
             <select
               value={classFilter}
               onChange={(e) => setClassFilter(e.target.value)}
-              style={{
-                padding: "10px 12px",
-                borderRadius: 14,
-                background: "rgba(0,0,0,.25)",
-                border: "1px solid rgba(255,255,255,.10)",
-                color: "inherit",
-              }}
+              style={{ width: 160 }}
             >
               {classFolders.map((c) => (
                 <option key={c} value={c}>
@@ -549,51 +614,56 @@ export default function App() {
           </div>
 
           <div className="list">
-            {filteredNotes.map((n) => (
-              <div
-                key={n.id}
-                className={`item ${n.id === activeNoteId ? "active" : ""}`}
-                style={{ display: "flex", gap: 10, alignItems: "center" }}
-              >
-                <button
-                  style={{ flex: 1, textAlign: "left" }}
-                  onClick={() => setActiveNoteId(n.id)}
-                  title="Open note"
+            {filteredNotes.map((n) => {
+              const preview = String(n.body || "").trim().slice(0, 90);
+              return (
+                <div
+                  key={n.id}
+                  className={`item ${n.id === activeNoteId ? "active" : ""}`}
+                  style={{ display: "flex", gap: 10, alignItems: "center" }}
                 >
-                  <div style={{ fontWeight: 900 }}>
-                    {n.pinned ? "📌 " : ""}
-                    {n.title || "Untitled"}
-                  </div>
-                  <div className="muted">{n.className || "—"}</div>
-                </button>
+                  <button
+                    style={{ flex: 1, textAlign: "left", background: "transparent", border: "none", boxShadow: "none" }}
+                    onClick={() => setActiveNoteId(n.id)}
+                    title="Open note"
+                  >
+                    <div style={{ fontWeight: 950 }}>
+                      {n.pinned ? "📌 " : ""}
+                      {n.title || "Untitled"}
+                    </div>
+                    <div className="muted">
+                      {(n.className || "—") + (preview ? " • " + preview + "…" : "")}
+                    </div>
+                  </button>
 
-                <button className={n.pinned ? "btn-ok" : ""} onClick={() => togglePin(n)}>
-                  {n.pinned ? "Pinned" : "Pin"}
-                </button>
-              </div>
-            ))}
-            {filteredNotes.length === 0 ? (
-              <div className="muted">No matches.</div>
-            ) : null}
+                  <button className={n.pinned ? "btn-ok" : ""} onClick={() => togglePin(n)}>
+                    {n.pinned ? "Pinned" : "Pin"}
+                  </button>
+                </div>
+              );
+            })}
+            {filteredNotes.length === 0 ? <div className="muted">No matches.</div> : null}
           </div>
 
           <div className="row">
-            <button className="btn-danger" onClick={deleteNote}>
+            <button className="btn-danger" onClick={deleteNote} disabled={!activeNoteId}>
               Delete
             </button>
             <div className="spacer" />
-            <button className="btn-primary" onClick={saveNote}>
-              Save
+            <button className="btn-primary" onClick={() => saveNote(true)} disabled={!activeNoteId}>
+              Save now
             </button>
           </div>
         </section>
 
         {/* CENTER: Editor */}
-        <section className="card panel">
+        <section className="card panel soft-enter">
           <div className="panel-head">
             <b>Editor</b>
             <div className="row">
-              <button onClick={timestamp}>+ Timestamp</button>
+              <button onClick={timestamp} disabled={!activeNoteId}>
+                + Timestamp
+              </button>
 
               <label className="pill" style={{ cursor: "pointer" }}>
                 Import PDF
@@ -605,8 +675,12 @@ export default function App() {
                 />
               </label>
 
-              <button onClick={summarize}>Summarize</button>
-              <button onClick={makeFlashcards}>Flashcards</button>
+              <button onClick={summarize} disabled={!draftBody.trim()}>
+                Summarize
+              </button>
+              <button onClick={makeFlashcards} disabled={!draftBody.trim() || !activeNoteId}>
+                Flashcards
+              </button>
             </div>
           </div>
 
@@ -615,36 +689,35 @@ export default function App() {
               value={draftTitle}
               onChange={(e) => setDraftTitle(e.target.value)}
               placeholder="Title (renames note)"
+              disabled={!activeNoteId}
             />
             <input
               value={draftClass}
               onChange={(e) => setDraftClass(e.target.value)}
-              placeholder="Class (folder)"
+              placeholder="Class / Folder"
+              disabled={!activeNoteId}
             />
             <textarea
               value={draftBody}
               onChange={(e) => setDraftBody(e.target.value)}
-              placeholder="Write notes..."
+              placeholder="Write notes…"
+              disabled={!activeNoteId}
             />
           </div>
 
-          <div className="panel-head" style={{ marginTop: 6 }}>
+          <div className="panel-head" style={{ marginTop: 2 }}>
             <b>Transcript</b>
             <div className="row">
               <span className="pill">
                 {speechSupported ? (isTranscribing ? "LIVE" : "READY") : "UNSUPPORTED"}
               </span>
-              <button
-                className="btn-ok"
-                onClick={startTranscription}
-                disabled={!speechSupported || isTranscribing}
-              >
+              <button className="btn-ok" onClick={startTranscription} disabled={!speechSupported || isTranscribing}>
                 Start
               </button>
               <button onClick={stopTranscription} disabled={!speechSupported || !isTranscribing}>
                 Stop
               </button>
-              <button onClick={insertTranscriptIntoNote} disabled={!transcript.trim()}>
+              <button onClick={insertTranscriptIntoNote} disabled={!transcript.trim() || !activeNoteId}>
                 Insert
               </button>
               <button onClick={() => setTranscript("")} disabled={!transcript.trim()}>
@@ -666,7 +739,7 @@ export default function App() {
         </section>
 
         {/* RIGHT: Calendar + Tasks + Flashcards */}
-        <section className="card panel">
+        <section className="card panel soft-enter">
           {/* Calendar */}
           <div className="panel-head">
             <b>Calendar</b>
@@ -679,16 +752,9 @@ export default function App() {
             <button onClick={() => setCalMonth((d) => addMonths(d, +1))}>▶</button>
           </div>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(7, 1fr)",
-              gap: 8,
-              marginTop: 6,
-            }}
-          >
+          <div className="cal-grid">
             {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-              <div key={d} className="muted" style={{ textAlign: "center", fontSize: 12 }}>
+              <div key={d} className="cal-dow">
                 {d}
               </div>
             ))}
@@ -703,72 +769,34 @@ export default function App() {
               const hasAny = due.length > 0;
 
               return (
-                <button
+                <div
                   key={key}
-                  className="item"
+                  className={`cal-day ${isSelected ? "active" : ""}`}
                   onClick={() => {
                     setSelectedDay(key);
                     setTaskDue(key);
                   }}
-                  style={{
-                    opacity: isThisMonth ? 1 : 0.35,
-                    borderColor: isSelected ? "rgba(107,91,255,.8)" : undefined,
-                    background: isSelected ? "rgba(107,91,255,.16)" : undefined,
-                    minHeight: 56,
-                    padding: 10,
-                    position: "relative",
-                  }}
+                  style={{ opacity: isThisMonth ? 1 : 0.38 }}
                   title={key}
                 >
-                  <div style={{ fontWeight: 900 }}>{d.getDate()}</div>
-
-                  {hasAny ? (
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: 10,
-                        right: 10,
-                        width: 10,
-                        height: 10,
-                        borderRadius: 99,
-                        background: hasUndone ? "rgba(255,209,102,1)" : "rgba(50,255,181,1)",
-                        boxShadow: hasUndone
-                          ? "0 0 14px rgba(255,209,102,.35)"
-                          : "0 0 14px rgba(50,255,181,.30)",
-                      }}
-                    />
-                  ) : null}
-
-                  <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
-                    {hasAny ? `${due.length} due` : ""}
-                  </div>
-                </button>
+                  <div className="cal-date">{d.getDate()}</div>
+                  {hasAny ? <div className={`cal-dot ${hasUndone ? "warn" : "ok"}`} /> : null}
+                  <div className="cal-meta">{hasAny ? `${due.length} due` : ""}</div>
+                </div>
               );
             })}
           </div>
 
           {/* Tasks */}
-          <div className="panel-head" style={{ marginTop: 8 }}>
+          <div className="panel-head" style={{ marginTop: 6 }}>
             <b>Due Dates</b>
             {selectedDay ? <span className="pill">Selected: {selectedDay}</span> : null}
           </div>
 
           <div>
-            <input
-              value={taskTitle}
-              onChange={(e) => setTaskTitle(e.target.value)}
-              placeholder="Assignment"
-            />
-            <input
-              value={taskClass}
-              onChange={(e) => setTaskClass(e.target.value)}
-              placeholder="Class (optional)"
-            />
-            <input
-              type="date"
-              value={taskDue}
-              onChange={(e) => setTaskDue(e.target.value)}
-            />
+            <input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} placeholder="Assignment" />
+            <input value={taskClass} onChange={(e) => setTaskClass(e.target.value)} placeholder="Class (optional)" />
+            <input type="date" value={taskDue} onChange={(e) => setTaskDue(e.target.value)} />
             <button className="btn-primary" onClick={addTask}>
               Add
             </button>
@@ -786,15 +814,17 @@ export default function App() {
                     Del
                   </button>
                 </div>
-                <div style={{ fontWeight: 900, marginTop: 8 }}>{t.title}</div>
-                <div className="muted">{t.className || "—"} • {t.due}</div>
+                <div style={{ fontWeight: 950, marginTop: 10 }}>{t.title}</div>
+                <div className="muted">
+                  {t.className || "—"} • {t.due}
+                </div>
               </div>
             ))}
             {tasks.length === 0 ? <div className="muted">No assignments yet.</div> : null}
           </div>
 
           {/* Flashcards */}
-          <div className="panel-head" style={{ marginTop: 6 }}>
+          <div className="panel-head" style={{ marginTop: 2 }}>
             <b>Flashcards</b>
             <span className="pill">{cards.length} total</span>
           </div>
@@ -809,7 +839,6 @@ export default function App() {
               />
               Only this note
             </label>
-
             <button className="btn-primary" onClick={startStudy}>
               Study
             </button>
@@ -825,30 +854,42 @@ export default function App() {
               </div>
 
               <div className="muted" style={{ marginTop: 8 }}>
-                Card {studyIndex + 1} of {studyDeck.length}
+                Card {studyIndex + 1} of {studyDeck.length} • Tap to flip
               </div>
 
               <div
-                className="details-card"
-                style={{ marginTop: 10, cursor: "pointer", userSelect: "none" }}
+                className={`details-card flip ${studyFlipped ? "flipped" : ""}`}
                 onClick={() => setStudyFlipped((v) => !v)}
-                title="Click to flip"
+                style={{ marginTop: 10, cursor: "pointer", userSelect: "none" }}
+                title="Tap to flip"
               >
-                <div style={{ fontWeight: 900, marginBottom: 8 }}>
-                  {studyFlipped ? "Answer" : "Question"}
+                <div className="flip-inner">
+                  <div className="flip-face">
+                    <div className="study-label">Question</div>
+                    <div style={{ whiteSpace: "pre-wrap" }}>
+                      {studyDeck[studyIndex]?.question || ""}
+                    </div>
+                    <div className="muted" style={{ marginTop: 10 }}>
+                      Tap to flip
+                    </div>
+                  </div>
+
+                  <div className="flip-face flip-back">
+                    <div className="study-label">Answer</div>
+                    <div style={{ whiteSpace: "pre-wrap" }}>
+                      {studyDeck[studyIndex]?.answer || ""}
+                    </div>
+                    <div className="muted" style={{ marginTop: 10 }}>
+                      Tap to flip
+                    </div>
+                  </div>
                 </div>
-                <div style={{ whiteSpace: "pre-wrap" }}>
-                  {!studyDeck.length
-                    ? "No cards."
-                    : studyFlipped
-                    ? studyDeck[studyIndex]?.answer || ""
-                    : studyDeck[studyIndex]?.question || ""}
-                </div>
-                <div className="muted" style={{ marginTop: 10 }}>Tap to flip</div>
               </div>
 
               <div className="row" style={{ marginTop: 10 }}>
-                <button onClick={prevCard} disabled={studyIndex === 0}>← Prev</button>
+                <button onClick={prevCard} disabled={studyIndex === 0}>
+                  ← Prev
+                </button>
                 <button onClick={() => setStudyFlipped((v) => !v)}>
                   {studyFlipped ? "Show Q" : "Show A"}
                 </button>
@@ -871,7 +912,7 @@ export default function App() {
             <div className="list">
               {cards.slice(0, 20).map((c) => (
                 <details key={c.id} className="details-card">
-                  <summary style={{ cursor: "pointer", fontWeight: 900 }}>
+                  <summary style={{ cursor: "pointer", fontWeight: 950 }}>
                     {c.question}
                     {c.noteTitle ? <div className="muted">from: {c.noteTitle}</div> : null}
                   </summary>
