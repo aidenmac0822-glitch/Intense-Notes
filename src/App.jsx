@@ -487,8 +487,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="card panel">
-          <div className="pill">Tip: Deploy it to use on your phone anywhere.</div>
+       <section className="card panel soft-enter"></section>
         </div>
       </div>
     );
